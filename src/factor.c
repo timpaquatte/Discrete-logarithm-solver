@@ -48,6 +48,8 @@ void factorize(factor_t factors[], mpz_t N, int* nbFactors)
             gmp_printf("%Zd %d ", factors[i].f, factors[i].e);
         if(mpz_probab_prime_p(cof, 50) > 0) {
             gmp_printf("%Zd 1", cof);
+			AddFactor(factors + nf, cof, 1, FACTOR_IS_PRIME);
+            nf++;
             mpz_set_ui(cof, 1);
         }
     }
