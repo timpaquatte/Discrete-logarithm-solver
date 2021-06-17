@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <pthread.h>
 
 #include "solve_dlog.h"
 #include "factor.h"
@@ -65,6 +66,7 @@ void pohligHellman(mpz_t result, const mpz_t g, const mpz_t a, const mpz_t N, mp
 {
 	mpz_t gi, ai, temp;
 	mpz_t* dlogs = malloc(nbFactors * sizeof(mpz_t));
+	pthread_t *pool = malloc(nbFactors * sizeof(pthread_t));
 
 	mpz_inits(gi, ai, temp, NULL);
 	for(int i = 0; i < nbFactors; i++)
@@ -75,11 +77,26 @@ void pohligHellman(mpz_t result, const mpz_t g, const mpz_t a, const mpz_t N, mp
 		mpz_powm(gi, g, temp, N);
 		mpz_powm(ai, a, temp, N);
 
-        printf("----------------------\n\n");
-		gmp_printf("gi = %Zd\nai = %Zd\nfactor = %Zd\n", gi, ai, factors[i]);
-		PollardRhoDLog(dlogs[i], gi, ai, N, factors[i], f);
-		gmp_printf("Result: %Zd\n\n", dlogs[i]);
+		PollardRhoArgs args = {
+			.result = dlogs[i],
+			.factor = factors[i],
+			.fct = &f
+		};
+		mpz_inits(args.result, args.g, args.a, args.N, args.factor, NULL);
+		mpz_set(args.g, gi);
+		mpz_set(args.a, ai);
+		mpz_set(args.N, N);
+		mpz_set(args.factor, factors[i]);
+		gmp_printf("N = %Zd\na = %Zd\ng = %Zd\n", args.N, args.a, args.g);
+		printf("---------------------\n");
+
+		pthread_create(&pool[i], NULL, &PollardRhoDLog, (void*) &args);
+		mpz_set(dlogs[i], args.result);
+		mpz_clears(args.result, args.g, args.a, args.N, args.factor, NULL);
 	}
+
+	for(int i = 0; i < nbFactors; i++)
+		pthread_join(pool[i], NULL);
 
 	CRT(result, dlogs, factors, nbFactors);
 
@@ -89,18 +106,18 @@ void pohligHellman(mpz_t result, const mpz_t g, const mpz_t a, const mpz_t N, mp
 	free(dlogs);
 }
 
-int PollardRhoDLog(mpz_t result, const mpz_t g, const mpz_t a, const mpz_t N, const mpz_t factor,
-					int (*fct)(mpz_t, mpz_t, const mpz_t, const mpz_t, const mpz_t))
+void* PollardRhoDLog(void *args)
 {
 	mpz_t x0, x, y, temp, N_;
 	mpz_t ux, uy, vx, vy;
 	mpz_t diff, gcd;
 	int ret, cpt = 0;
+	PollardRhoArgs *prArgs = (PollardRhoArgs*) args;
 
 	mpz_inits(x0, x, y, temp, N_, NULL);
 	mpz_inits(ux, uy, vx, vy, NULL);
 	mpz_inits(diff, gcd, NULL);
-	mpz_set(x0, a);
+	mpz_set(x0, prArgs->a);
 
 	do {
 		mpz_set(x, x0);
@@ -109,11 +126,13 @@ int PollardRhoDLog(mpz_t result, const mpz_t g, const mpz_t a, const mpz_t N, co
 		mpz_set_ui(uy, 1);
 		mpz_set_ui(vx, cpt);
 		mpz_set_ui(vy, cpt);
-		mpz_sub_ui(N_, N, 1);
+		mpz_sub_ui(N_, prArgs->N, 1);
 
 		do {
 			// x = f(x)
-			ret = fct(temp, x, N, a, g);
+			// gmp_printf("Avant: prArgs->fct=%p\n", (prArgs->fct));
+			// gmp_printf("N = %Zd\na = %Zd\ng = %Zd\n", prArgs->N, prArgs->a, prArgs->g);
+			ret = prArgs->fct(temp, x, prArgs->N, prArgs->a, prArgs->g);
 			mpz_set(x, temp);
 			// update ux, vx
 			switch (ret)
@@ -132,7 +151,7 @@ int PollardRhoDLog(mpz_t result, const mpz_t g, const mpz_t a, const mpz_t N, co
 
 			// y = f(f(y))
 			for(int i = 0; i < 2; i++) {
-				ret = fct(temp, y, N, a, g);
+				ret = prArgs->fct(temp, y, prArgs->N, prArgs->a, prArgs->g);
 				mpz_set(y, temp);
 				switch (ret)
 				{
@@ -158,22 +177,25 @@ int PollardRhoDLog(mpz_t result, const mpz_t g, const mpz_t a, const mpz_t N, co
 
 		// Now that we've found ux,uy,vx,vy, we have to be sure that they give a solution
 		mpz_sub(diff, ux, uy);
-		mpz_mod(diff, diff, factor);
-		mpz_gcd(gcd, diff, factor);
+		mpz_mod(diff, diff, prArgs->factor);
+		mpz_gcd(gcd, diff, prArgs->factor);
 
 		cpt++;
-		mpz_mul(x0, x0, g);
+		mpz_mul(x0, x0, prArgs->g);
 	} while(mpz_cmp_ui(gcd, 1) != 0);
 
-	mpz_invert(result, diff, factor);
+	mpz_invert(prArgs->result, diff, prArgs->factor);
 	mpz_sub(diff, vy, vx);
-	mpz_mod(diff, diff, factor);
-	mpz_mul(result, result, diff);
-	mpz_mod(result, result, factor);
+	mpz_mod(diff, diff, prArgs->factor);
+	mpz_mul(prArgs->result, prArgs->result, diff);
+	mpz_mod(prArgs->result, prArgs->result, prArgs->factor);
 
 	mpz_clears(x0, x, y, temp, N_, NULL);
 	mpz_clears(ux, uy, vx, vy, NULL);
 	mpz_clears(diff, gcd, NULL);
+
+	// Print results
+	gmp_printf("----------------------\n\ngi = %Zd\nai = %Zd\nfactor = %Zd\nResult: %Zd\n\n", prArgs->g, prArgs->a, prArgs->factor, prArgs->result);
 }
 
 void usage(char *s){

@@ -7,8 +7,9 @@ SRC := $(wildcard $(SRC_DIR)/*.c)
 OBJ := $(SRC:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
 
 
-LD_FLAGS=-lgmp -lm
-CC_FLAGS=-O3
+LD_FLAGS=-lgmp -lpthread -lm
+CC_FLAGS=-O3 -g -D_REENTRANT
+
 INC=-Iinclude
 
 all: $(EXE)
